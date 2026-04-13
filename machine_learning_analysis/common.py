@@ -16,6 +16,7 @@ import seaborn as sns
 
 
 DEFAULT_RANDOM_STATE = 42
+DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
 def build_parser(description: str) -> argparse.ArgumentParser:
@@ -60,9 +61,27 @@ def load_csv(
     index_col: int | None = None,
 ) -> pd.DataFrame:
     csv_path = Path(data_path)
-    if not csv_path.exists():
-        raise FileNotFoundError(f"Input CSV not found: {csv_path}")
-    return pd.read_csv(csv_path, header=header, index_col=index_col)
+    resolved_path = resolve_data_path(csv_path)
+    return pd.read_csv(resolved_path, header=header, index_col=index_col)
+
+
+def resolve_data_path(data_path: str | Path) -> Path:
+    csv_path = Path(data_path)
+    if csv_path.exists():
+        return csv_path
+
+    fallback_candidates = [csv_path.name]
+    if csv_path.suffix != ".csv":
+        fallback_candidates.append(f"{csv_path.name}.csv")
+    elif csv_path.stem:
+        fallback_candidates.append(f"{csv_path.stem}.csv")
+
+    for candidate in fallback_candidates:
+        fallback_path = DEFAULT_DATA_DIR / candidate
+        if fallback_path.exists():
+            return fallback_path
+
+    raise FileNotFoundError(f"Input CSV not found: {csv_path}")
 
 
 def require_columns(dataframe: pd.DataFrame, columns: Sequence[str]) -> None:

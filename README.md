@@ -48,6 +48,17 @@ Optional dependency:
 
 - `neupy` is only required for `generalized_regression_nn.py` and for `probabilistic_nn.py --method pnn`.
 
+## Bundled Dummy Datasets
+
+The repository now includes built-in fallback CSV fixtures under [machine_learning_analysis/data](machine_learning_analysis/data):
+
+- [machine_learning_analysis/data/course_data.csv](machine_learning_analysis/data/course_data.csv)
+- [machine_learning_analysis/data/sample_data.csv](machine_learning_analysis/data/sample_data.csv)
+- [machine_learning_analysis/data/HW3_data.csv](machine_learning_analysis/data/HW3_data.csv)
+- [machine_learning_analysis/data/forestfires.csv](machine_learning_analysis/data/forestfires.csv)
+
+If you pass a missing dataset path whose filename matches one of those fixtures, the loader will automatically fall back to the bundled version. This makes local demos and CI validation possible even when the original CSVs are not available.
+
 ## Running Modules
 
 Run the tools as Python modules from the repository root:
@@ -203,6 +214,14 @@ Syntax validation can be run with:
 ```bash
 python3 -m compileall machine_learning_analysis
 ```
+
+Unit tests can be run with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+GitHub Actions CI is defined in [.github/workflows/ci.yml](.github/workflows/ci.yml) and runs on pushes and pull requests.
 
 Because the repository does not include the original CSV datasets, end-to-end model execution still depends on providing real input files and installing the required packages.
 
