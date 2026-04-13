@@ -1,20 +1,44 @@
 # Machine Learning Analysis
 
-This repository contains command-line tools for classical machine learning analysis tasks on CSV datasets. The original codebase was a collection of interactive, dataset-specific scripts. It has been refactored into importable Python 3 modules with consistent CLI arguments, reproducible model training, input validation, and structured outputs.
+This repository contains command-line tools for classical machine learning analysis tasks on CSV datasets. It is now organized as a small Python package instead of a flat set of ad hoc scripts.
+
+## Repository Layout
+
+```text
+machine_learning_analysis/
+  common.py
+  data_sources/
+    fetch_zinc.py
+  models/
+    backpropagation_nn.py
+    generalized_regression_nn.py
+    knn_classifier.py
+    neural_network_accuracy.py
+    probabilistic_nn.py
+    svm_classifier.py
+    tree_models.py
+  unsupervised/
+    hierarchical_clustering.py
+    pca_analysis.py
+  visualization/
+    exploratory_plots.py
+README.md
+requirements.txt
+```
 
 ## What Changed
 
-- Removed interactive `input()` prompts and hard-coded CSV filenames.
-- Standardized all scripts around `--data`, `--output-dir`, and `--random-state`.
-- Added validation for required columns and safer filesystem handling.
-- Made model training reproducible through explicit random seeds.
+- Renamed all scripts to consistent snake_case module names.
+- Grouped files by responsibility: `models`, `unsupervised`, `visualization`, and `data_sources`.
+- Moved shared helpers into [machine_learning_analysis/common.py](machine_learning_analysis/common.py).
+- Removed interactive prompts and hard-coded CSV filenames.
+- Standardized all tools around `--data`, `--output-dir`, and `--random-state`.
+- Added validation for required columns and deterministic model behavior.
 - Saved metrics to JSON and plots to `outputs/` instead of relying on transient console output.
-- Modernized `fetchZinc.py` to Python 3 and a CSV-based export flow.
-- Added dependency documentation and git ignore rules for generated files.
 
 ## Requirements
 
-Install the dependencies with:
+Install dependencies with:
 
 ```bash
 python3 -m pip install -r requirements.txt
@@ -22,14 +46,14 @@ python3 -m pip install -r requirements.txt
 
 Optional dependency:
 
-- `neupy` is only required for `GeneralizedRegressionNN.py` and for `ProbabilisticNN.py --method pnn`.
+- `neupy` is only required for `generalized_regression_nn.py` and for `probabilistic_nn.py --method pnn`.
 
-## Common Usage Pattern
+## Running Modules
 
-Most scripts follow this structure:
+Run the tools as Python modules from the repository root:
 
 ```bash
-python3 <script>.py --data path/to/dataset.csv --output-dir outputs
+python3 -m machine_learning_analysis.<group>.<module> --data path/to/dataset.csv
 ```
 
 Shared arguments:
@@ -38,88 +62,62 @@ Shared arguments:
 - `--output-dir`: directory for plots and reports. Defaults to `outputs`.
 - `--random-state`: seed for deterministic model behavior. Defaults to `42`.
 
-Use `--help` on any script to see its full interface.
+Use `--help` on any module to inspect its full interface.
 
-## Scripts
+## Modules
 
-### BackpropagationNN.py
+### machine_learning_analysis.models.backpropagation_nn
 
 Train a multilayer perceptron for regression or classification.
 
-Example:
-
 ```bash
-python3 BackpropagationNN.py \
+python3 -m machine_learning_analysis.models.backpropagation_nn \
   --data data/course_data.csv \
   --analysis-type classification \
   --features AvgHW AvgQuiz AvgLab MT1 MT2 Final Participation \
   --target Letter
 ```
 
-Output: JSON report with cross-validation and test metrics.
+### machine_learning_analysis.models.tree_models
 
-### DecisionTree.py
-
-Compare three tree-based classifiers: decision tree, random forest, and gradient boosting.
-
-Example:
+Compare decision tree, random forest, and gradient boosting classifiers.
 
 ```bash
-python3 DecisionTree.py \
+python3 -m machine_learning_analysis.models.tree_models \
   --data data/course_data.csv \
   --target Letter \
   --features AvgHW AvgQuiz AvgLab MT1 MT2 Final Participation
 ```
 
-Outputs:
-
-- Feature-importance plot
-- Graphviz `.dot` export for the fitted decision tree
-- JSON metrics report
-
-### GeneralizedRegressionNN.py
+### machine_learning_analysis.models.generalized_regression_nn
 
 Train a generalized regression neural network using KMeans-derived prototypes.
 
-Example:
-
 ```bash
-python3 GeneralizedRegressionNN.py \
+python3 -m machine_learning_analysis.models.generalized_regression_nn \
   --data data/course_data.csv \
   --target Grade \
   --prototypes 12 \
   --std 0.1
 ```
 
-Output: JSON regression report.
-
-### Heirarchical_Clustering.py
+### machine_learning_analysis.unsupervised.hierarchical_clustering
 
 Run KMeans and agglomerative clustering on two selected features and export a dendrogram.
 
-Example:
-
 ```bash
-python3 Heirarchical_Clustering.py \
+python3 -m machine_learning_analysis.unsupervised.hierarchical_clustering \
   --data data/sample_data.csv \
   --features X1 X2 \
   --clusters 8
 ```
 
-Outputs:
+### machine_learning_analysis.models.knn_classifier
 
-- Combined cluster comparison plot
-- Dendrogram plot
-- JSON silhouette summary
-
-### kNN.py
-
-Train a k-nearest-neighbors classifier and optionally render a decision boundary when using two features.
-
-Example:
+Train a k-nearest-neighbors classifier and optionally render a decision boundary.
 
 ```bash
-python3 kNN.py \
+python3 -m machine_learning_analysis.models.knn_classifier \
   --data data/HW3_data.csv \
   --features X1 X2 \
   --target Y \
@@ -127,14 +125,12 @@ python3 kNN.py \
   --plot-decision-boundary
 ```
 
-### NN_accuracy.py
+### machine_learning_analysis.models.neural_network_accuracy
 
-Sweep hidden-layer sizes for an MLP and plot the resulting test scores.
-
-Example:
+Sweep hidden-layer sizes for an MLP and plot the resulting scores.
 
 ```bash
-python3 NN_accuracy.py \
+python3 -m machine_learning_analysis.models.neural_network_accuracy \
   --data data/forestfires.csv \
   --analysis-type regression \
   --target area \
@@ -142,39 +138,24 @@ python3 NN_accuracy.py \
   --max-neurons 50
 ```
 
-Outputs:
+### machine_learning_analysis.unsupervised.pca_analysis
 
-- Accuracy sweep plot
-- JSON report containing all tested neuron counts
-
-### PCA.py
-
-Compute principal components on selected numeric columns and export transformed component values.
-
-Example:
+Compute principal components and export transformed component values.
 
 ```bash
-python3 PCA.py \
+python3 -m machine_learning_analysis.unsupervised.pca_analysis \
   --data data/course_data.csv \
   --components 3 \
   --features AvgHW AvgQuiz AvgLab MT1 MT2 Final Participation \
   --scale
 ```
 
-Outputs:
-
-- CSV of principal component scores
-- Explained variance plot
-- JSON report with covariance, correlation, and component loadings
-
-### Pairplot_Jointplot.py
+### machine_learning_analysis.visualization.exploratory_plots
 
 Generate pairplots, jointplots, and simple linear regression diagnostics.
 
-Example:
-
 ```bash
-python3 Pairplot_Jointplot.py \
+python3 -m machine_learning_analysis.visualization.exploratory_plots \
   --data data/course_data.csv \
   --header \
   --pairplot \
@@ -182,30 +163,24 @@ python3 Pairplot_Jointplot.py \
   --regression AvgHW Final
 ```
 
-### ProbabilisticNN.py
+### machine_learning_analysis.models.probabilistic_nn
 
 Train either Gaussian Naive Bayes or a probabilistic neural network using per-class KMeans prototypes.
 
-Example:
-
 ```bash
-python3 ProbabilisticNN.py \
+python3 -m machine_learning_analysis.models.probabilistic_nn \
   --data data/course_data.csv \
   --target Letter \
   --method gaussian_nb \
   --prototypes-per-class 4
 ```
 
-Output: JSON classification report.
-
-### svm.py
+### machine_learning_analysis.models.svm_classifier
 
 Train a support vector classifier and optionally render a decision boundary.
 
-Example:
-
 ```bash
-python3 svm.py \
+python3 -m machine_learning_analysis.models.svm_classifier \
   --data data/sample_data.csv \
   --features X1 X2 \
   --target Y \
@@ -213,28 +188,25 @@ python3 svm.py \
   --plot-decision-boundary
 ```
 
-### fetchZinc.py
+### machine_learning_analysis.data_sources.fetch_zinc
 
 Fetch compound descriptors from ZINC15 for a numeric ID range and export them to CSV.
 
-Example:
-
 ```bash
-python3 fetchZinc.py 1000 1010 --output outputs/zinc_subset.csv
+python3 -m machine_learning_analysis.data_sources.fetch_zinc 1000 1010 --output outputs/zinc_subset.csv
 ```
 
 ## Validation
 
-Syntax validation was run with:
+Syntax validation can be run with:
 
 ```bash
-python3 -m compileall .
+python3 -m compileall machine_learning_analysis
 ```
 
-Because the repository does not include the original CSV datasets, end-to-end model execution was not run during this refactor.
+Because the repository does not include the original CSV datasets, end-to-end model execution still depends on providing real input files and installing the required packages.
 
 ## Notes
 
-- `Heirarchical_Clustering.py` retains its original filename for backward compatibility, even though the spelling is non-standard.
 - Reports and plots are written under `outputs/` by default.
 - Generated artifacts are ignored by git.
