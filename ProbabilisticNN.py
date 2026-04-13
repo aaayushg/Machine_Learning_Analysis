@@ -1,144 +1,139 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""
-Installing neupy can be difficult in anaconda. In the command, try:
-    'conda install neupy==0.6.5', if this does not work, try:
-    'pip install neupy==0.6.5', if this still does not work, try:
-    '/Users/NAME/anaconda3/bin/pip install neupy==0.6.5', switching your path name to your anaconda bin folder.
+from __future__ import annotations
 
-Also note that we are installing neupy version 0.6.5 that is supposed to be more stable than the latest version.
-"""
-
-#Libraries needed to run the tool
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import cross_val_score
-from sklearn.model_selection import cross_val_predict
-from sklearn import preprocessing
-from sklearn import metrics
-from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
-from neupy.algorithms import RBFKMeans
-from neupy.algorithms import PNN 
-from sklearn.naive_bayes import GaussianNB #Like Probabilistic Neural Network with one layer
+from sklearn.cluster import KMeans
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.naive_bayes import GaussianNB
+from sklearn.preprocessing import MinMaxScaler
+
+from ml_analysis_utils import (
+    build_parser,
+    dataset_stem,
+    ensure_output_dir,
+    load_csv,
+    print_dataframe_summary,
+    require_columns,
+    serialize_scores,
+    write_json_report,
+)
+
+try:
+    from neupy.algorithms import PNN
+except ImportError:  # pragma: no cover - dependency availability varies by environment
+    PNN = None
 
 
-#Ask for file name and read the file
-#file_name = raw_input("Name of file:")
-file_name = 'course_data'
-data = pd.read_csv(file_name + '.csv', header=0)
-
-#Print number of rows and colums read
-print("{0} rows and {1} columns".format(len(data.index), len(data.columns)))
-print("")
-
-#Defining dataset and droppping values we won't use, but keeping Y since we'll need it.
-data_X = data.drop(['Name', 'Grade', 'Letter', 'Percentile'], axis=1)
-
-#Hacking a normalization but keeping columns names since min_max_scaler does not return a dataframe
-data_norm = (data_X - data_X.min()) / (data_X.max() - data_X.min())
-#Adding a letter column to the normalized dataset
-data_norm["Letter"] = data.Letter
-
-#Using Built in train test split function in sklearn
-data_train, data_test = train_test_split(data_norm, test_size=0.2)
-
-#Defining testing sets
-X_test = data_test.drop(['Letter'], axis=1)
-Y_test = data_test.Letter
+DEFAULT_EXCLUDED_COLUMNS = {"Name", "Grade", "Letter", "Percentile"}
 
 
-#Defining test sets and picking prototypes
-
-#Splitting classes
-ClassA_df = data_train[data_train['Letter'].isin(['A'])]
-ClassA_data = ClassA_df.drop(['Letter'], axis=1)
-#print (ClassA_data)
-#print("")
-
-ClassB_df = data_train[data_train['Letter'].isin(['B'])]
-ClassB_data = ClassB_df.drop(['Letter'], axis=1)
-#print (ClassB_data)
-#print("")
-
-ClassC_df = data_train[data_train['Letter'].isin(['C'])]
-ClassC_data = ClassC_df.drop(['Letter'], axis=1)
-#print (ClassC_data)
-#print("")
-
-ClassD_df = data_train[data_train['Letter'].isin(['D'])]
-ClassD_data = ClassD_df.drop(['Letter'], axis=1)
-#print (ClassD_data)
-#print("")
+def parse_args():
+    parser = build_parser("Train a probabilistic neural network or Gaussian Naive Bayes baseline using class prototypes.")
+    parser.add_argument("--features", nargs="+", help="Feature columns to include. Defaults to numeric columns excluding metadata.")
+    parser.add_argument("--target", default="Letter", help="Classification target column.")
+    parser.add_argument("--method", choices=["gaussian_nb", "pnn"], default="gaussian_nb")
+    parser.add_argument("--prototypes-per-class", type=int, default=4, help="Maximum prototypes to derive per class.")
+    parser.add_argument("--std", type=float, default=0.1, help="PNN smoothing parameter.")
+    parser.add_argument("--test-size", type=float, default=0.2, help="Fraction of rows reserved for testing.")
+    parser.add_argument("--cv", type=int, default=3, help="Number of cross-validation folds.")
+    return parser.parse_args()
 
 
-# RBF and kmeans clustering by class 
+def infer_features(data: pd.DataFrame, target: str, requested):
+    if requested:
+        require_columns(data, [*requested, target])
+        return list(requested)
+    numeric_columns = data.select_dtypes(include=[np.number]).columns.tolist()
+    return [column for column in numeric_columns if column not in DEFAULT_EXCLUDED_COLUMNS and column != target]
 
-#Number of prototypes
-#prototypes = int(input("Number of prototypes:"))
-prototypes = 4
-eps = 1e-5
 
-#Finding cluster centers
-rbfk_netA = RBFKMeans(n_clusters=prototypes) #Chose number of clusters that you want
-rbfk_netA.train(ClassA_data, epsilon=eps)
-center_classA = pd.DataFrame(rbfk_netA.centers)
+def build_class_prototypes(x_train: pd.DataFrame, y_train: pd.Series, prototypes_per_class: int, random_state: int):
+    prototype_frames = []
+    prototype_labels = []
+    for label in sorted(y_train.unique()):
+        class_rows = x_train.loc[y_train == label]
+        cluster_count = min(prototypes_per_class, len(class_rows))
+        if cluster_count < 1:
+            continue
+        model = KMeans(n_clusters=cluster_count, n_init=10, random_state=random_state)
+        model.fit(class_rows)
+        centers = pd.DataFrame(model.cluster_centers_, columns=x_train.columns)
+        prototype_frames.append(centers)
+        prototype_labels.extend([label] * cluster_count)
+    if not prototype_frames:
+        raise ValueError("Unable to build class prototypes from the training data.")
+    return pd.concat(prototype_frames, ignore_index=True), np.asarray(prototype_labels)
 
-rbfk_netB = RBFKMeans(n_clusters=prototypes)
-rbfk_netB.train(ClassB_data, epsilon=eps)
-center_classB = pd.DataFrame(rbfk_netB.centers)
 
-rbfk_netC = RBFKMeans(n_clusters=prototypes)
-rbfk_netC.train(ClassC_data, epsilon=eps)
-center_classC = pd.DataFrame(rbfk_netC.centers)
+def main() -> None:
+    args = parse_args()
+    if args.method == "pnn" and PNN is None:
+        raise ImportError("neupy is required for --method pnn. Install it with `pip install neupy==0.8.2` or a compatible version.")
 
-#Defining my Y_train
-letter_classA = ['A']*prototypes
-letter_classB = ['B']*prototypes
-letter_classC = ['C']*prototypes
+    data = load_csv(args.data)
+    print_dataframe_summary(data)
+    require_columns(data, [args.target])
+    features = infer_features(data, args.target, args.features)
+    if not features:
+        raise ValueError("No usable feature columns were found.")
 
-# Stack center of clusters as the training data
-X_train = np.vstack((center_classA, center_classB, center_classC))
-Y_train = np.hstack((letter_classA, letter_classB, letter_classC))
+    x_data = data[features]
+    y_data = data[args.target]
+    x_train, x_test, y_train, y_test = train_test_split(
+        x_data,
+        y_data,
+        test_size=args.test_size,
+        random_state=args.random_state,
+        stratify=y_data,
+    )
 
-method = input('Gaussian Naive Bayes (G) or PNN (P):')
+    scaler = MinMaxScaler()
+    x_train_scaled = pd.DataFrame(scaler.fit_transform(x_train), columns=features, index=x_train.index)
+    x_test_scaled = pd.DataFrame(scaler.transform(x_test), columns=features, index=x_test.index)
+    x_prototypes, y_prototypes = build_class_prototypes(
+        x_train_scaled,
+        y_train,
+        args.prototypes_per_class,
+        args.random_state,
+    )
 
-#Cross validation
-cross_validation = 3
+    if args.method == "pnn":
+        model = PNN(std=args.std)
+        model.train(x_prototypes, y_prototypes)
+    else:
+        model = GaussianNB()
+        model.fit(x_prototypes, y_prototypes)
 
-#Call Gaussian Naive Bayesian classifier as PNN
-if method == 'P' or method == 'p':
-    pnn = PNN(std=0.1)
-    pnn.train(X_train, Y_train)
-    
-    # Cross validataion
-    score = cross_val_score(pnn, X_train, Y_train, scoring='accuracy', cv=cross_validation)
-    print("")
-    print("Cross Validation: {0} (+/- {1})".format(abs(score.mean().round(2)), (score.std() * 2).round(2)))
-    print("")
-    
-    #Prediction
-    Y_predict = pnn.predict(X_test)
-    print(Y_test.values)
-    print(Y_predict)
-    print("Accuracy: {0}".format(metrics.accuracy_score(Y_test, Y_predict).round(2)))
-    
-else:
-    pnn = GaussianNB()
-    pnn.fit(X_train, Y_train)
-    print('Sigma: {0}'.format(pnn.sigma_)) #Standard deviation is estimated using maximum likelihood, so one sigma per variable and per class
-    
-    # Cross validataion
-    score = cross_val_score(pnn, X_train, Y_train, scoring='accuracy', cv=cross_validation)
-    print("")
-    print("Cross Validation: {0} (+/- {1})".format(abs(score.mean().round(2)), (score.std() * 2).round(2)))
-    print("")
-    
-    #Prediction
-    Y_predict = pnn.predict(X_test)
-    print(Y_test.values)
-    print(Y_predict)
-    print("Accuracy: {0}".format(metrics.accuracy_score(Y_test, Y_predict).round(2)))
-    print("")
-    
+    cv_scores = cross_val_score(model, x_prototypes, y_prototypes, scoring="accuracy", cv=args.cv)
+    predictions = model.predict(x_test_scaled)
+    test_accuracy = accuracy_score(y_test, predictions)
+
+    report = {
+        "features": features,
+        "target": args.target,
+        "method": args.method,
+        "prototypes_per_class": args.prototypes_per_class,
+        "prototype_count": int(len(x_prototypes)),
+        "cv_scores": serialize_scores(cv_scores),
+        "cv_mean": round(float(cv_scores.mean()), 4),
+        "cv_std_x2": round(float(cv_scores.std() * 2), 4),
+        "test_accuracy": round(float(test_accuracy), 4),
+        "classes": sorted(str(value) for value in y_data.unique()),
+    }
+    if args.method == "gaussian_nb":
+        report["class_count"] = [int(value) for value in model.class_count_]
+
+    output_dir = ensure_output_dir(args.output_dir)
+    report_path = output_dir / f"{dataset_stem(args.data)}_probabilistic_nn.json"
+    write_json_report(report, report_path)
+
+    print(f"Cross-validation mean: {report['cv_mean']} (+/- {report['cv_std_x2']})")
+    print(f"Test accuracy: {report['test_accuracy']}")
+    print(f"Report written to: {report_path}")
+
+
+if __name__ == "__main__":
+    main()

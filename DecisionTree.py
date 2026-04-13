@@ -1,126 +1,132 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-#Libraries needed to run the tool
-import numpy as np
-import pandas as pd
-from sklearn import tree
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn import metrics
-from sklearn.model_selection import train_test_split
-from sklearn.model_selection import cross_val_score
+from __future__ import annotations
+
 import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set(style='darkgrid')
+from sklearn import tree
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import cross_val_score, train_test_split
 
-#Ask for file name and read the file
-#file_name = raw_input("Name of file:")
-file_name = 'course_data'
-data = pd.read_csv(file_name + '.csv', header=0, index_col=0)
-
-
-#Print number of rows and colums read
-print("{0} rows and {1} columns".format(len(data.index), len(data.columns)))
-print("")
-
-#Defining X and Y
-X = data[['AvgHW', 'AvgQuiz', 'AvgLab','MT1', 'MT2', 'Final', 'Participation']]
-Y = data.Letter
-
-#Using Built in train test split function in sklearn
-X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size = 0.2, stratify = Y)
+from ml_analysis_utils import (
+    build_parser,
+    configure_plotting,
+    dataset_stem,
+    ensure_output_dir,
+    load_csv,
+    print_dataframe_summary,
+    require_columns,
+    save_figure,
+    serialize_scores,
+    write_json_report,
+)
 
 
-#Fit the Decision tree
-crit_choice = ['gini', 'entropy']
-crit = crit_choice[0]
-cross_val_number = 5
-decitree = tree.DecisionTreeClassifier(criterion=crit, max_depth=10)
-randfor = RandomForestClassifier(n_estimators = 5, criterion=crit)
-gbm = GradientBoostingClassifier(n_estimators=100, max_depth=10)
+DEFAULT_FEATURES = ["AvgHW", "AvgQuiz", "AvgLab", "MT1", "MT2", "Final", "Participation"]
 
 
-#Cross Validation (CV) process
-decitree_scores = cross_val_score(decitree, X_train, Y_train, cv=cross_val_number)
-randfor_scores = cross_val_score(randfor, X_train, Y_train, cv=cross_val_number)
-gbm_scores = cross_val_score(gbm, X_train, Y_train, cv=cross_val_number)
-print("")
-print("Decision Tree Accuracy: {0} (+/- {1})".format(decitree_scores.mean().round(2), (decitree_scores.std() * 2).round(2)))
-print("Random Forest Accuracy: {0} (+/- {1})".format(randfor_scores.mean().round(2), (randfor_scores.std() * 2).round(2)))
-print("Gradient Boosting Accuracy: {0} (+/- {1})".format(gbm_scores.mean().round(2), (gbm_scores.std() * 2).round(2)))
-print("")
-
-#Training final algorithms
-decitree.fit(X_train, Y_train) #Decision Tree fitting
-randfor.fit(X_train, Y_train) #Random Forest fitting
-gbm.fit(X_train, Y_train) #Gradient Boosting fitting
+def parse_args():
+    parser = build_parser("Compare decision-tree-based classifiers and export feature importances.")
+    parser.add_argument("--features", nargs="+", default=DEFAULT_FEATURES, help="Feature columns to include.")
+    parser.add_argument("--target", default="Letter", help="Classification target column.")
+    parser.add_argument("--criterion", choices=["gini", "entropy", "log_loss"], default="gini")
+    parser.add_argument("--max-depth", type=int, default=10, help="Maximum decision tree depth.")
+    parser.add_argument("--forest-estimators", type=int, default=100, help="Number of trees in the random forest.")
+    parser.add_argument("--boosting-estimators", type=int, default=100, help="Number of boosting stages.")
+    parser.add_argument("--test-size", type=float, default=0.2, help="Fraction of rows reserved for testing.")
+    parser.add_argument("--cv", type=int, default=5, help="Number of cross-validation folds.")
+    return parser.parse_args()
 
 
-#Final Predictions
-
-print("Y test values: {0}".format(Y_test.values))
-print("")
-
-#Decision treee
-decitree_predict = decitree.predict(X_test)
-decitree_score = metrics.accuracy_score(decitree_predict, Y_test)
-print("Decision Tree: {0}".format(decitree_predict))
-print("Decision tree score: {0}".format(decitree_score))
-print("")
-
-#Random Forest
-randfor_predict = randfor.predict(X_test)
-randfor_score = metrics.accuracy_score(randfor_predict, Y_test)
-print("Random Forest: {0}".format(randfor_predict))
-print("Random Forest score: {0}".format(randfor_score))
-print("")
-
-#Gradient Boosting
-gbm_predict = gbm.predict(X_test)
-gbm_score = metrics.accuracy_score(gbm_predict, Y_test)
-print("Gradient Boosting: {0}".format(gbm_predict))
-print("Gradient Boosting score: {0}".format(gbm_score))
-print("")
+def build_models(args):
+    return {
+        "decision_tree": tree.DecisionTreeClassifier(
+            criterion=args.criterion,
+            max_depth=args.max_depth,
+            random_state=args.random_state,
+        ),
+        "random_forest": RandomForestClassifier(
+            n_estimators=args.forest_estimators,
+            criterion=args.criterion,
+            random_state=args.random_state,
+        ),
+        "gradient_boosting": GradientBoostingClassifier(
+            n_estimators=args.boosting_estimators,
+            random_state=args.random_state,
+        ),
+    }
 
 
-#Variable Importance Plots
-nb_var = np.arange(len(X.columns))
+def main() -> None:
+    args = parse_args()
+    configure_plotting()
+    data = load_csv(args.data, index_col=0)
+    print_dataframe_summary(data)
+    require_columns(data, [*args.features, args.target])
 
-#Decision Tree
-plt.barh(nb_var, decitree.feature_importances_)
-plt.yticks(nb_var, X.columns)
-plt.title('Decision Tree')
-plt.savefig(file_name + '_VI_decitree.png') #Saving the plot
-plt.show()
-print("")
+    x_data = data[args.features]
+    y_data = data[args.target]
+    x_train, x_test, y_train, y_test = train_test_split(
+        x_data,
+        y_data,
+        test_size=args.test_size,
+        random_state=args.random_state,
+        stratify=y_data,
+    )
 
-#Random Forest
-plt.barh(nb_var, randfor.feature_importances_)
-plt.yticks(nb_var, X.columns)
-plt.title('Random Forest')
-plt.savefig(file_name + '_VI_randfor.png') #Saving the plot
-plt.show()
+    models = build_models(args)
+    report = {
+        "target": args.target,
+        "features": args.features,
+        "models": {},
+    }
+    output_dir = ensure_output_dir(args.output_dir)
 
-#Gradient Boosting
-plt.barh(nb_var, gbm.feature_importances_)
-plt.yticks(nb_var, X.columns)
-plt.title('Gradient Boosting')
-plt.savefig(file_name + '_VI_gbm.png') #Saving the plot
-plt.show()
+    figure, axes = plt.subplots(1, 3, figsize=(15, 5))
+    for axis, (name, model) in zip(axes, models.items()):
+        cv_scores = cross_val_score(model, x_train, y_train, cv=args.cv, scoring="accuracy")
+        model.fit(x_train, y_train)
+        predictions = model.predict(x_test)
+        test_accuracy = accuracy_score(y_test, predictions)
+        report["models"][name] = {
+            "cv_scores": serialize_scores(cv_scores),
+            "cv_mean": round(float(cv_scores.mean()), 4),
+            "cv_std_x2": round(float(cv_scores.std() * 2), 4),
+            "test_accuracy": round(float(test_accuracy), 4),
+            "feature_importances": {
+                feature: round(float(importance), 6)
+                for feature, importance in zip(args.features, model.feature_importances_)
+            },
+        }
+
+        axis.barh(args.features, model.feature_importances_)
+        axis.set_title(name.replace("_", " ").title())
+        axis.set_xlabel("Importance")
+
+    plot_path = output_dir / f"{dataset_stem(args.data)}_tree_feature_importances.png"
+    save_figure(figure, plot_path)
+
+    dot_path = output_dir / f"{dataset_stem(args.data)}_decision_tree.dot"
+    tree.export_graphviz(
+        models["decision_tree"],
+        out_file=str(dot_path),
+        feature_names=args.features,
+        class_names=sorted(str(value) for value in y_data.unique()),
+        filled=True,
+    )
+
+    report_path = output_dir / f"{dataset_stem(args.data)}_tree_models.json"
+    write_json_report(report, report_path)
+
+    for name, metrics_payload in report["models"].items():
+        print(
+            f"{name}: cv={metrics_payload['cv_mean']} (+/- {metrics_payload['cv_std_x2']}), "
+            f"test={metrics_payload['test_accuracy']}"
+        )
+    print(f"Feature importance plot written to: {plot_path}")
+    print(f"Decision tree graph written to: {dot_path}")
+    print(f"Report written to: {report_path}")
 
 
-#Export tree properties in graph format
-#to see the graph need to use 'dot -Tpng HW7_data_decitree.dot -o HW7_data_decitree.png' in command prompt, if needed, install Graphviz from http://www.graphviz.org/
-#alternatively, copy and paste the text from the .dot file to http://www.webgraphviz.com/
-features = ['AvgHW', 'AvgQuiz', 'AvgLab','MT1', 'MT2', 'Final', 'Participation']
-classes = ['A', 'B', 'C', 'D']
-tree.export_graphviz(decitree, out_file = file_name + '_tree_decitree.dot', feature_names=features, class_names=classes)
-
-'''
-i_tree = 0
-for tree_in_forest in randfor.estimators_:
-    with open(file_name + '_tree_randfor_' + str(i_tree) + '.dot', 'w') as my_file:
-        my_file = tree.export_graphviz(tree_in_forest, out_file = my_file, feature_names=features, class_names=classes)
-    i_tree += 1
-'''
+if __name__ == "__main__":
+    main()

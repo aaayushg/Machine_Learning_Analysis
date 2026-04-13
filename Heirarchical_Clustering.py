@@ -1,86 +1,100 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-#Libraries needed to run the tool
-import numpy as np
-import pandas as pd
-from sklearn.cluster import KMeans
-from sklearn.cluster import AgglomerativeClustering
-from sklearn import metrics
-from scipy.cluster.hierarchy import dendrogram, linkage #for dendrogram specifically
+from __future__ import annotations
+
 import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set(style='darkgrid')
+from scipy.cluster.hierarchy import dendrogram, linkage
+from sklearn.cluster import AgglomerativeClustering, KMeans
+from sklearn.metrics import silhouette_score
 
-#Ask for file name and read the file
-#file_name = raw_input("Name of file:")
-file_name = 'sample_data'
-data = pd.read_csv(file_name + '.csv', header=0)
-
-#Print number of rows and colums read
-print("{0} rows and {1} columns".format(len(data.index), len(data.columns)))
-print("")
-
-#Defining all the data X
-X = data[['X1', 'X2']]
-
-
-#Define number of clusters
-clusters = 8
+from ml_analysis_utils import (
+    build_parser,
+    configure_plotting,
+    dataset_stem,
+    ensure_output_dir,
+    load_csv,
+    print_dataframe_summary,
+    require_columns,
+    save_figure,
+    write_json_report,
+)
 
 
-#Define which KMeans algorithm to use and fit it
-Y_Kmeans = KMeans(n_clusters = clusters)
-Y_Kmeans.fit(X)
-Y_Kmeans_labels = Y_Kmeans.labels_
-Y_Kmeans_silhouette = metrics.silhouette_score(X, Y_Kmeans_labels, metric='sqeuclidean')
-print("Silhouette for Kmeans: {0}".format(Y_Kmeans_silhouette))
-print("Results for Kmeans: {0}".format(Y_Kmeans_labels))
+def parse_args():
+    parser = build_parser("Run k-means and hierarchical clustering on two selected features.")
+    parser.add_argument("--features", nargs=2, default=["X1", "X2"], help="Exactly two columns to cluster and plot.")
+    parser.add_argument("--clusters", type=int, default=8, help="Number of clusters.")
+    parser.add_argument(
+        "--hierarchical-linkage",
+        choices=["ward", "average", "complete", "single"],
+        default="ward",
+        help="Linkage criterion for agglomerative clustering.",
+    )
+    parser.add_argument(
+        "--dendrogram-linkage",
+        choices=["ward", "average", "complete", "single"],
+        default="average",
+        help="Linkage criterion for the dendrogram rendering.",
+    )
+    return parser.parse_args()
 
 
-#Define which hierarchical clustering algorithm to use and fit it
-linkage_types = ['ward', 'average', 'complete']
-Y_hierarchy = AgglomerativeClustering(linkage=linkage_types[0], n_clusters=clusters)
-Y_hierarchy.fit(X)
-Y_hierarchy_labels = Y_hierarchy.labels_
-Y_hierarchy_silhouette = metrics.silhouette_score(X, Y_hierarchy_labels, metric='sqeuclidean')
-print("Silhouette for Hierarchical Clustering: {0}".format(Y_hierarchy_silhouette))
-print("Hierarchical Clustering: {0}".format(Y_hierarchy_labels))
+def main() -> None:
+    args = parse_args()
+    configure_plotting()
+    data = load_csv(args.data)
+    print_dataframe_summary(data)
+    require_columns(data, args.features)
+    x_data = data[args.features]
+
+    kmeans = KMeans(n_clusters=args.clusters, n_init=10, random_state=args.random_state)
+    kmeans_labels = kmeans.fit_predict(x_data)
+    kmeans_silhouette = float(silhouette_score(x_data, kmeans_labels, metric="sqeuclidean"))
+
+    hierarchy = AgglomerativeClustering(linkage=args.hierarchical_linkage, n_clusters=args.clusters)
+    hierarchy_labels = hierarchy.fit_predict(x_data)
+    hierarchy_silhouette = float(silhouette_score(x_data, hierarchy_labels, metric="sqeuclidean"))
+
+    figure, axes = plt.subplots(1, 2, figsize=(10, 4))
+    axes[0].scatter(x_data.iloc[:, 0], x_data.iloc[:, 1], c=kmeans_labels, cmap="tab10")
+    axes[0].set_title(f"KMeans (s={kmeans_silhouette:.2f})")
+    axes[0].set_xlabel(args.features[0])
+    axes[0].set_ylabel(args.features[1])
+    axes[1].scatter(x_data.iloc[:, 0], x_data.iloc[:, 1], c=hierarchy_labels, cmap="tab10")
+    axes[1].set_title(f"Hierarchical (s={hierarchy_silhouette:.2f})")
+    axes[1].set_xlabel(args.features[0])
+    axes[1].set_ylabel(args.features[1])
+
+    output_dir = ensure_output_dir(args.output_dir)
+    clustering_plot = output_dir / f"{dataset_stem(args.data)}_clustering.png"
+    save_figure(figure, clustering_plot)
+
+    dendrogram_figure = plt.figure(figsize=(12, 8))
+    linkage_matrix = linkage(x_data, method=args.dendrogram_linkage)
+    dendrogram(linkage_matrix, labels=data.index.astype(str).tolist())
+    plt.title("Hierarchical Clustering Dendrogram")
+    plt.xlabel("Row index")
+    plt.ylabel("Distance")
+    dendrogram_plot = output_dir / f"{dataset_stem(args.data)}_dendrogram.png"
+    save_figure(dendrogram_figure, dendrogram_plot)
+
+    report = {
+        "features": args.features,
+        "clusters": args.clusters,
+        "hierarchical_linkage": args.hierarchical_linkage,
+        "dendrogram_linkage": args.dendrogram_linkage,
+        "kmeans_silhouette": round(kmeans_silhouette, 4),
+        "hierarchical_silhouette": round(hierarchy_silhouette, 4),
+    }
+    report_path = output_dir / f"{dataset_stem(args.data)}_clustering.json"
+    write_json_report(report, report_path)
+
+    print(f"KMeans silhouette: {report['kmeans_silhouette']}")
+    print(f"Hierarchical silhouette: {report['hierarchical_silhouette']}")
+    print(f"Cluster plot written to: {clustering_plot}")
+    print(f"Dendrogram written to: {dendrogram_plot}")
+    print(f"Report written to: {report_path}")
 
 
-#Define figure
-colormap = np.array(['magenta', 'black', 'blue', 'red', 'orange', 'green', 'brown', 'yellow', 'white', 'cyan']) #Define colors to use in graph - could use c=Y but colors are too similar when only 2-3 clusters
-fig = plt.figure() #Define an empty figure
-fig.set_size_inches(8,4) #Define the size of the figure as 8 inches by 4 inches
-
-#Plot KMeans results
-fig1 = fig.add_subplot(1,2,1)
-plt.title("KMeans")
-plt.scatter(data.X1, data.X2, c=colormap[Y_Kmeans_labels])
-plt.annotate("s = " + str(Y_Kmeans_silhouette.round(2)), xy=(1, 0), xycoords='axes fraction', horizontalalignment='right', verticalalignment='bottom')
-
-#Plot Hierarchical clustering results
-fig1 = fig.add_subplot(1,2,2)
-plt.title("Hierarchical Clustering")
-plt.scatter(data.X1, data.X2, c=colormap[Y_hierarchy_labels])
-plt.annotate("s = " + str(Y_hierarchy_silhouette.round(2)), xy=(1, 0), xycoords='axes fraction', horizontalalignment='right', verticalalignment='bottom')
-
-
-#Show plots
-fig.savefig(file_name + '_clustering.png', dpi=300)
-plt.show()
-
-#Can also plot individual silhouette coefficients: http://scikit-learn.org/stable/auto_examples/cluster/plot_kmeans_silhouette_analysis.html#sphx-glr-auto-examples-cluster-plot-kmeans-silhouette-analysis-py
-
-
-#Using Scipy to draw dendrograms - for more info, see: https://joernhees.de/blog/2015/08/26/scipy-hierarchical-clustering-and-dendrogram-tutorial/
-linkage_types = ['ward', 'average', 'complete']
-Z = linkage(X, linkage_types[1])
-dendro = plt.figure()
-dendro.set_size_inches(12,8)
-dendrogram(Z, labels=data.index)
-plt.title('Hierarchical Clustering Dendrogram')
-plt.xlabel('Index from Dataframe')
-plt.ylabel('Distance')
-plt.savefig(file_name + '_dendro.png', dpi=300)
-plt.show()
+if __name__ == "__main__":
+    main()

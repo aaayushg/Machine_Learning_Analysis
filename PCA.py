@@ -1,138 +1,106 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
+from __future__ import annotations
 
-#Libraries needed to run the tool
+import matplotlib.pyplot as plt
 import numpy as np
-np.set_printoptions(suppress=True, precision=5, linewidth=150) #to control what is printed: 'suppress=True' prevents exponential prints of numbers, 'precision=5' allows a max of 5 decimals, 'linewidth'=150 allows 150 characters to be shown in one line (thus not cutting matrices)
 import pandas as pd
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import LabelEncoder #To switch categorical letters to numbers
-from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set(style='darkgrid')
+from sklearn.preprocessing import StandardScaler
 
-#Ask for file name and read the file
-#file_name = raw_input("Name of file:")
-file_name = 'course_data'
-data = pd.read_csv(file_name + '.csv', header=0, index_col=0)
-
-#Print number of rows and colums read
-print("{0} rows and {1} columns".format(len(data.index), len(data.columns)))
-print("")
+from ml_analysis_utils import (
+    build_parser,
+    configure_plotting,
+    dataset_stem,
+    ensure_output_dir,
+    load_csv,
+    print_dataframe_summary,
+    save_figure,
+    write_json_report,
+)
 
 
-#Defining X with column_stack since we will use numpy to get the covariance matrix.
-X1 = data["AvgHW"]
-X2 = data.AvgQuiz
-X3 = data.AvgLab
-X4 = data.MT1
-X5 = data.MT2
-X6 = data.Final
-X7 = data.Participation
-X = np.column_stack((X1, X2, X3, X4, X5, X6, X7))
-#X = np.column_stack((X1, X2)) #Use only two variables to illustrate how transformation is done with two variables (with more the distances get distorted in a graph)
+def parse_args():
+    parser = build_parser("Compute principal components for a numeric dataset.")
+    parser.add_argument("--features", nargs="+", help="Feature columns to include. Defaults to all numeric columns.")
+    parser.add_argument("--components", type=int, required=True, help="Number of principal components.")
+    parser.add_argument(
+        "--scale",
+        action="store_true",
+        help="Apply standard scaling before PCA.",
+    )
+    parser.add_argument(
+        "--index-col",
+        type=int,
+        default=0,
+        help="Column index to use as the dataframe index when loading the CSV.",
+    )
+    return parser.parse_args()
 
 
-#Calculate and show covariance matrix
-print("Covariance matrix")
-print(np.cov(X, rowvar=0).round(2)) #rowvar=0 means that each column is a variable. Anything else suggest each row is a variable.
-print('')
-print("Here 1") #print to know where you are or to check if a bug exists
-a = np.linalg.eigvals(np.cov(X, rowvar=0))
-print(a/a.sum()) #To show that percentage variance explained by components is the eigenvalues
-print('')
-print("Here 2")
+def main() -> None:
+    args = parse_args()
+    configure_plotting()
+    data = load_csv(args.data, index_col=args.index_col)
+    print_dataframe_summary(data)
+
+    if args.features:
+        missing = [column for column in args.features if column not in data.columns]
+        if missing:
+            raise ValueError(f"Missing required columns: {', '.join(sorted(missing))}")
+        feature_data = data[args.features]
+    else:
+        feature_data = data.select_dtypes(include=[np.number])
+        if feature_data.empty:
+            raise ValueError("No numeric columns found for PCA.")
+
+    if args.components < 1 or args.components > feature_data.shape[1]:
+        raise ValueError("--components must be between 1 and the number of selected features.")
+
+    matrix = feature_data.to_numpy()
+    covariance = np.cov(matrix, rowvar=False)
+    correlation = np.corrcoef(matrix, rowvar=False)
+    if args.scale:
+        matrix = StandardScaler().fit_transform(matrix)
+
+    pca = PCA(n_components=args.components)
+    transformed = pca.fit_transform(matrix)
+    component_names = [f"PC{i}" for i in range(1, args.components + 1)]
+    transformed_df = pd.DataFrame(transformed, columns=component_names, index=feature_data.index)
+
+    output_dir = ensure_output_dir(args.output_dir)
+    transformed_path = output_dir / f"{dataset_stem(args.data)}_pca_components.csv"
+    transformed_df.to_csv(transformed_path)
+
+    figure, axis = plt.subplots(figsize=(8, 5))
+    explained = pca.explained_variance_ratio_
+    axis.bar(component_names, explained)
+    axis.set_ylabel("Explained variance ratio")
+    axis.set_title("PCA Explained Variance")
+    plot_path = output_dir / f"{dataset_stem(args.data)}_pca_explained_variance.png"
+    save_figure(figure, plot_path)
+
+    report = {
+        "features": feature_data.columns.tolist(),
+        "components": args.components,
+        "scaled": args.scale,
+        "mean": [round(float(value), 6) for value in pca.mean_],
+        "explained_variance_ratio": [round(float(value), 6) for value in explained],
+        "components_matrix": [[round(float(value), 6) for value in row] for row in pca.components_],
+        "covariance_matrix": np.round(covariance, 6).tolist(),
+        "correlation_matrix": np.round(correlation, 6).tolist(),
+        "transformed_csv": str(transformed_path),
+        "plot": str(plot_path),
+    }
+    report_path = output_dir / f"{dataset_stem(args.data)}_pca.json"
+    write_json_report(report, report_path)
+
+    print("Explained variance ratio:")
+    print(report["explained_variance_ratio"])
+    print(f"Transformed components written to: {transformed_path}")
+    print(f"Plot written to: {plot_path}")
+    print(f"Report written to: {report_path}")
 
 
-#Calculate and show correlation coefficients between datasets
-print("Correlation Coefficients")
-print(np.corrcoef(X, rowvar=0).round(2))
-print("")
-
-
-#Define the PCA algorithm
-ncompo = int(input("Number of components to study:"))
-print("")
-pca = PCA(n_components=ncompo)
-
-#Find the PCA
-pcafit = pca.fit(X) #Use all data points since we are trying to figure out which variables are relevant
-
-print("Mean")
-print(pcafit.mean_)
-print("")
-print("Principal Components Results")
-print(pcafit.components_)
-print("")
-print("Percentage variance explained by components")
-print(pcafit.explained_variance_ratio_)
-print("")
-
-print(X)
-X_new = pca.transform(X)
-print(X_new)
-
-'''
-#Plot percentage variance explained by components 
-perc = pcafit.explained_variance_ratio_
-perc_x = range(1, len(perc)+1)
-plt.plot(perc_x, perc)
-plt.xlabel('Components')
-plt.ylabel('Percentage of Variance Explained')
-plt.savefig(file_name + '_pervar', dpi=300)
-plt.show()
-'''
-
-'''
-#Before and After
-#Use AvgHw and AvgQuiz so that X_new[:,0] and X_new[:,1] are always AvgHW and AvgQuiz
-before_after = input("Before / After Plot (Y):")
-if before_after == 'Y' or before_after == 'y':
-    le = LabelEncoder() #used to turn categorical letters to numbers: 0, 1, 2, 3
-    le.fit(data.Letter)
-    number = le.transform(data.Letter)
-    colormap = np.array(['blue', 'green', 'orange', 'red'])
-    
-    fig = plt.figure(figsize=(12, 4))
-    ax = fig.add_subplot(121)
-    ax.scatter(X1, X2, c=colormap[number])
-    ax.set_xlabel('AvgHW')
-    ax.set_ylabel('AvgQuiz')
-    
-    
-    ax = fig.add_subplot(122)
-    ax.scatter(X_new[:,0], X_new[:,1], c=colormap[number])
-    ax.set_xlabel('AvgHW')
-    ax.set_ylabel('AvgQuiz')
-    
-    plt.savefig(file_name + '_before_after', dpi=300)
-    plt.show()
-'''
-
-'''
-#Fun 3D Plot
-plot_3D = input("3D Plot (Y):")
-if plot_3D == 'Y' or plot_3D == 'y':
-    le = LabelEncoder() #used to turn categorical letters to numbers: 0, 1, 2, 3
-    le.fit(data.Letter)
-    number = le.transform(data.Letter)
-    colormap = np.array(['blue', 'green', 'orange', 'red'])
-    
-    fig = plt.figure(figsize=(12, 4))
-    ax = fig.add_subplot(121, projection='3d')
-    ax.scatter(X4, X5, X6, c=colormap[number])
-    ax.set_xlabel('MT1')
-    ax.set_ylabel('MT2')
-    ax.set_zlabel('Final')
-    
-    ax = fig.add_subplot(122, projection='3d')
-    ax.scatter(X_new[:,4], X_new[:,5], X_new[:,6], c=colormap[number])
-    ax.set_xlabel('MT1')
-    ax.set_ylabel('MT2')
-    ax.set_zlabel('Final')
-    
-    plt.savefig(file_name + '_3D', dpi=300)
-    plt.show()
-'''
+if __name__ == "__main__":
+    main()

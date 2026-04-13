@@ -1,134 +1,147 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-#Libraries needed to run the tool
-import numpy as np
-import pandas as pd
-from sklearn.neural_network import MLPRegressor
-from sklearn.neural_network import MLPClassifier
-from sklearn import preprocessing #to normalize the values
-from sklearn.model_selection import train_test_split
-from sklearn.model_selection import cross_val_score
-import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set(style='darkgrid')
+from __future__ import annotations
 
-#Ask for file name and read the file
-#file_name = raw_input("Name of file:")
-file_name = 'course_data'
-data = pd.read_csv(file_name + '.csv', header=0)
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.neural_network import MLPClassifier, MLPRegressor
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import MinMaxScaler
 
-analysis_type = input("Analysis Type 'R' or 'C': ")
-
-#Print number of rows and colums read
-print("{0} rows and {1} columns".format(len(data.index), len(data.columns)))
-print("")
-
-#Defining X
-X_raw = data[['AvgHW', 'AvgQuiz', 'AvgLab','MT1', 'MT2', 'Final', 'Participation']]
-
-#Normalizing or not the data
-min_max_scaler = preprocessing.MinMaxScaler()
-X = min_max_scaler.fit_transform(X_raw)
-#X = X_raw
-#print(X)
-
-#Defining Y variables depending on whether we have a regression or classification problem
-if analysis_type == 'R' or analysis_type == 'r':
-    Y = data.Grade
-else:
-    Y = data.Letter
-
-#Using Built in train test split function in sklearn
-X_train, X_test, Y_train, Y_test = train_test_split(X, Y, train_size = 0.8)
+from ml_analysis_utils import (
+    build_parser,
+    dataset_stem,
+    ensure_output_dir,
+    load_csv,
+    print_dataframe_summary,
+    require_columns,
+    serialize_scores,
+    write_json_report,
+)
 
 
-if analysis_type == 'R' or analysis_type == 'r':
-    #Fit the neural network for Regression purposes (i.e., you expect a continuous variable out)
-    #Note that 'sgd' and 'adam' require a batch_size and the function is not as clear
-    acti = ['logistic', 'tanh', 'relu', 'identity']
-    algo = ['lbfgs', 'sgd', 'adam']
-    learn = ['constant', 'invscaling', 'adaptive']
-    neural = MLPRegressor(activation=acti[0], solver=algo[0], learning_rate = learn[0], hidden_layer_sizes=(7,)) 
-    
-    #Cross validation
-    neural_scores = cross_val_score(neural, X_train, Y_train, cv=5)
-    print("Cross Validation Accuracy: {0} (+/- {1})".format(neural_scores.mean().round(2), (neural_scores.std() * 2).round(2)))
-    print("")
-        
-    #Fitting final neural network
-    neural.fit(X_train, Y_train)
-    neural_score = neural.score(X_test, Y_test)
-    print("Shape of neural network: {0}".format([coef.shape for coef in neural.coefs_]))
-    print("Coefs: ")
-    print("")
-    print(neural.coefs_[0].round(2))
-    print("")
-    print(neural.coefs_[1].round(2))
-    print("")
-    print("Intercepts: {0}".format(neural.intercepts_))
-    print("")
-    print("Loss: {0}".format(neural.loss_))
-    print("")
-    print("Iteration: {0}".format(neural.n_iter_))
-    print("")
-    print("Layers: {0}".format(neural.n_layers_))
-    print("")
-    print("Outputs: {0}".format(neural.n_outputs_))
-    print("")
-    print("Output Activation: {0}".format(neural.out_activation_)) #identity because we are looking for a value
-    print("")
+DEFAULT_FEATURES = ["AvgHW", "AvgQuiz", "AvgLab", "MT1", "MT2", "Final", "Participation"]
 
-    #Assess the fitted Neural Network
-    print("Y test and predicted")
-    print(Y_test.values)
-    print(neural.predict(X_test).round(1))
-    print("")
-    print("Accuracy as Pearson's R2: {0}".format(neural_score.round(4)))
-    print("")
 
-else:
-    #Fit the neural network for Classification purposes (i.e., you don't expect a continuous variable out).
-    #Note that 'sgd' and 'adam' require a batch_size and the function is not as clear
-    acti = ['logistic', 'tanh', 'relu', 'identity']
-    algo = ['lbfgs', 'sgd', 'adam']
-    learn = ['constant', 'invscaling', 'adaptive']
-    neural = MLPClassifier(activation=acti[2], solver=algo[0], learning_rate = learn[0], hidden_layer_sizes=(7,)) 
-    
-    #Cross validation
-    neural_scores = cross_val_score(neural, X_train, Y_train, cv=5)
-    print("Cross Validation Accuracy: {0} (+/- {1})".format(neural_scores.mean().round(2), (neural_scores.std() * 2).round(2)))
-    print("")
-        
-    #Fitting final neural network    
-    neural.fit(X_train, Y_train)
-    neural_score = neural.score(X_test, Y_test)
-    print("Classes: {0}".format(neural.classes_))
-    print("")
-    print("Shape of neural network: {0}".format([coef.shape for coef in neural.coefs_]))
-    print("")
-    print("Coefs: ")
-    print(neural.coefs_[0].round(2))
-    print("")
-    print(neural.coefs_[1].round(2))
-    print("")
-    print("Intercepts: {0}".format(neural.intercepts_))
-    print("")
-    print("Loss: {0}".format(neural.loss_))
-    print("")
-    print("Iteration: {0}".format(neural.n_iter_))
-    print("")
-    print("Layers: {0}".format(neural.n_layers_))
-    print("")
-    print("Outputs: {0}".format(neural.n_outputs_))
-    print("")
-    print("Output Activation: {0}".format(neural.out_activation_)) #softmax to get a probability between 0 and 1
-    print("")
+def parse_args():
+    parser = build_parser("Train a backpropagation neural network for regression or classification.")
+    parser.add_argument(
+        "--analysis-type",
+        choices=["regression", "classification"],
+        required=True,
+        help="Choose whether to fit a regressor or classifier.",
+    )
+    parser.add_argument(
+        "--features",
+        nargs="+",
+        default=DEFAULT_FEATURES,
+        help="Feature columns to include.",
+    )
+    parser.add_argument("--target", help="Override the default target column.")
+    parser.add_argument("--hidden-units", type=int, default=7, help="Number of hidden units.")
+    parser.add_argument(
+        "--solver",
+        choices=["lbfgs", "sgd", "adam"],
+        default="lbfgs",
+        help="Optimization algorithm for the MLP model.",
+    )
+    parser.add_argument(
+        "--activation",
+        choices=["identity", "logistic", "tanh", "relu"],
+        default=None,
+        help="Activation function. Defaults depend on analysis type.",
+    )
+    parser.add_argument("--test-size", type=float, default=0.2, help="Fraction of rows reserved for testing.")
+    parser.add_argument("--cv", type=int, default=5, help="Number of cross-validation folds.")
+    parser.add_argument("--max-iter", type=int, default=1000, help="Maximum solver iterations.")
+    return parser.parse_args()
 
-    #Assess the fitted Neural Network
-    print("Y test and predicted")
-    print(Y_test.values)
-    print(neural.predict(X_test))
-    print("")
-    print("Mean Accuracy: {0}".format(neural_score.round(4)))
-    print("")
+
+def build_model(args):
+    if args.analysis_type == "regression":
+        activation = args.activation or "logistic"
+        estimator = MLPRegressor(
+            activation=activation,
+            solver=args.solver,
+            hidden_layer_sizes=(args.hidden_units,),
+            max_iter=args.max_iter,
+            random_state=args.random_state,
+        )
+        scoring = "r2"
+        default_target = "Grade"
+        stratify = None
+    else:
+        activation = args.activation or "relu"
+        estimator = MLPClassifier(
+            activation=activation,
+            solver=args.solver,
+            hidden_layer_sizes=(args.hidden_units,),
+            max_iter=args.max_iter,
+            random_state=args.random_state,
+        )
+        scoring = "accuracy"
+        default_target = "Letter"
+        stratify = True
+
+    pipeline = Pipeline([
+        ("scaler", MinMaxScaler()),
+        ("model", estimator),
+    ])
+    return pipeline, scoring, default_target, stratify
+
+
+def main() -> None:
+    args = parse_args()
+    data = load_csv(args.data)
+    print_dataframe_summary(data)
+
+    pipeline, scoring, default_target, should_stratify = build_model(args)
+    target = args.target or default_target
+
+    require_columns(data, [*args.features, target])
+    x_data = data[args.features]
+    y_data = data[target]
+
+    x_train, x_test, y_train, y_test = train_test_split(
+        x_data,
+        y_data,
+        test_size=args.test_size,
+        random_state=args.random_state,
+        stratify=y_data if should_stratify else None,
+    )
+
+    cv_scores = cross_val_score(pipeline, x_train, y_train, cv=args.cv, scoring=scoring)
+    pipeline.fit(x_train, y_train)
+    test_score = pipeline.score(x_test, y_test)
+    fitted_model = pipeline.named_steps["model"]
+
+    report = {
+        "analysis_type": args.analysis_type,
+        "features": args.features,
+        "target": target,
+        "cv_scores": serialize_scores(cv_scores),
+        "cv_mean": round(float(cv_scores.mean()), 4),
+        "cv_std_x2": round(float(cv_scores.std() * 2), 4),
+        "test_score": round(float(test_score), 4),
+        "hidden_units": args.hidden_units,
+        "solver": args.solver,
+        "activation": fitted_model.activation,
+        "loss": round(float(fitted_model.loss_), 6),
+        "iterations": int(fitted_model.n_iter_),
+        "n_layers": int(fitted_model.n_layers_),
+        "n_outputs": int(fitted_model.n_outputs_),
+        "output_activation": fitted_model.out_activation_,
+    }
+    if args.analysis_type == "classification":
+        report["classes"] = fitted_model.classes_.tolist()
+
+    output_dir = ensure_output_dir(args.output_dir)
+    report_path = output_dir / f"{dataset_stem(args.data)}_backpropagation_{args.analysis_type}.json"
+    write_json_report(report, report_path)
+
+    print(f"Cross-validation mean: {report['cv_mean']} (+/- {report['cv_std_x2']})")
+    print(f"Test score: {report['test_score']}")
+    print(f"Report written to: {report_path}")
+
+
+if __name__ == "__main__":
+    main()

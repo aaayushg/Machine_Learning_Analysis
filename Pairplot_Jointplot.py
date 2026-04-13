@@ -1,79 +1,115 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-#Libraries needed to run the tool
-import numpy as np
-import pandas as pd
-from sklearn import linear_model
-from sklearn.metrics import r2_score
+from __future__ import annotations
+
 import matplotlib.pyplot as plt
+import numpy as np
 import seaborn as sns
-sns.set(style='darkgrid')
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+
+from ml_analysis_utils import (
+    build_parser,
+    configure_plotting,
+    dataset_stem,
+    ensure_output_dir,
+    load_csv,
+    print_dataframe_summary,
+    require_columns,
+    write_json_report,
+)
 
 
-#Ask for file name
-#file_name = input("Name of file:")
-file_name = 'course_data'
-file_header = input("File has labels and header (Y):")
+def parse_args():
+    parser = build_parser("Generate pairplots, jointplots, and simple linear regression diagnostics.")
+    parser.add_argument("--header", action="store_true", help="Treat the CSV as having a header row.")
+    parser.add_argument(
+        "--index-col",
+        type=int,
+        default=0,
+        help="Column index to use as the dataframe index when --header is supplied.",
+    )
+    parser.add_argument("--pairplot", action="store_true", help="Render a seaborn pairplot.")
+    parser.add_argument("--pairplot-columns", nargs="+", help="Columns to include in the pairplot.")
+    parser.add_argument("--jointplot", nargs=2, metavar=("X", "Y"), help="Render a jointplot for two columns.")
+    parser.add_argument(
+        "--jointplot-kind",
+        choices=["scatter", "kde", "hist", "hex", "reg", "resid"],
+        default="kde",
+        help="Jointplot rendering style.",
+    )
+    parser.add_argument(
+        "--regression",
+        nargs=2,
+        metavar=("X", "Y"),
+        help="Fit a simple linear regression with one predictor and one target.",
+    )
+    return parser.parse_args()
 
 
-#Create a pandas dataframe from the csv file.      
-if file_header == 'Y' or file_header == 'y':
-    data = pd.read_csv(file_name + '.csv', header=0, index_col=0) #Remove index_col = 0 if rows do not have headers
-else:
-    data = pd.read_csv(file_name + '.csv', header=None)
+def main() -> None:
+    args = parse_args()
+    configure_plotting()
+    header = 0 if args.header else None
+    index_col = args.index_col if args.header else None
+    data = load_csv(args.data, header=header, index_col=index_col)
+    print_dataframe_summary(data)
+
+    output_dir = ensure_output_dir(args.output_dir)
+    report = {
+        "rows": len(data.index),
+        "columns": [str(column) for column in data.columns],
+    }
+
+    if args.pairplot:
+        pairplot_columns = args.pairplot_columns or list(data.columns)
+        require_columns(data, pairplot_columns)
+        pair_grid = sns.pairplot(data[pairplot_columns], diag_kind="hist")
+        pairplot_path = output_dir / f"{dataset_stem(args.data)}_pairplot.png"
+        pair_grid.savefig(pairplot_path)
+        plt.close(pair_grid.figure)
+        report["pairplot"] = str(pairplot_path)
+        print(f"Pairplot written to: {pairplot_path}")
+
+    if args.jointplot:
+        x_var, y_var = args.jointplot
+        require_columns(data, [x_var, y_var])
+        joint_grid = sns.jointplot(data=data, x=x_var, y=y_var, kind=args.jointplot_kind)
+        jointplot_path = output_dir / f"{dataset_stem(args.data)}_{x_var}_{y_var}_jointplot.png"
+        joint_grid.savefig(jointplot_path)
+        plt.close(joint_grid.figure)
+        report["jointplot"] = {
+            "x": x_var,
+            "y": y_var,
+            "kind": args.jointplot_kind,
+            "path": str(jointplot_path),
+        }
+        print(f"Jointplot written to: {jointplot_path}")
+
+    if args.regression:
+        x_var, y_var = args.regression
+        require_columns(data, [x_var, y_var])
+        x_values = data[[x_var]].to_numpy()
+        y_values = data[y_var].to_numpy()
+        model = LinearRegression()
+        model.fit(x_values, y_values)
+        predictions = model.predict(x_values)
+        regression_payload = {
+            "x": x_var,
+            "y": y_var,
+            "slope": round(float(model.coef_.ravel()[0]), 6),
+            "intercept": round(float(np.ravel(model.intercept_)[0]), 6) if np.ndim(model.intercept_) else round(float(model.intercept_), 6),
+            "mse": round(float(mean_squared_error(y_values, predictions)), 6),
+            "r2": round(float(r2_score(y_values, predictions)), 6),
+        }
+        report["regression"] = regression_payload
+        print(f"Regression: y = {regression_payload['slope']} * x + {regression_payload['intercept']}")
+        print(f"MSE: {regression_payload['mse']}  R2: {regression_payload['r2']}")
+
+    report_path = output_dir / f"{dataset_stem(args.data)}_eda.json"
+    write_json_report(report, report_path)
+    print(f"Report written to: {report_path}")
 
 
-#Print number of rows and colums read
-print("{0} rows and {1} columns".format(len(data.index), len(data.columns.values)))
-print('')
-
-
-#Plot a pairplot
-pairplot = input("Plot a pairplot (Y):")
-if pairplot == 'Y' or pairplot == 'y':
-    sns_pairplot = sns.pairplot(data, diag_kind="kde")
-    sns_pairplot.savefig(file_name + "_pairplot.png")
-    plt.show()
-
-
-#Plot a jointplot
-jointplot = input("Plot a jointplot (Y):")
-if jointplot == 'Y' or jointplot == 'y':
-    print(data.columns.values)
-    x_var = input("X variable:")
-    y_var = input("Y variale:")
-    sns_jointplot = sns.jointplot(data[x_var], data[y_var], kind="kde")
-    sns_jointplot.savefig(file_name + "_jointplot.png")
-    plt.show()
-
-
-#Perform regression analysis
-while True:    
-    regression = input("Perform a linear regression (Y):")
-    if regression == 'Y' or regression == 'y':
-        print('') #Add onle line for space
-        print(data.columns.values)
-        #Set the x and y variables.
-        x_var = input("X variable:")
-        y_var = input("Y variable:")
-        print('')
-        #sklearn prefers 2d arrays, so we simply change the format of the data using the "reshape" function.
-        x = data[x_var].values.reshape(-1, 1)
-        y = data[y_var].values.reshape(-1, 1)
-        
-        
-        lr = linear_model.LinearRegression() #Call regression model
-        lr.fit(x, y) #Fit regression
-        print("{0} * x + {1}".format(lr.coef_[0][0].round(2), lr.intercept_[0].round(2))) #Show equations calculated
-        
-        y_pred = lr.predict(x) #Calculate points predicted to measure accuracy
-        R2 = r2_score(y, y_pred) #Calculate R2 score
-        print("MSE: {0} and R2: {1}".format(np.mean((y_pred - y)**2).round(2), R2))
-        
-    else:
-        break
-
-#Goodbye message
-print('')
-print("Good Bye")
+if __name__ == "__main__":
+    main()
